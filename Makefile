@@ -1,7 +1,7 @@
 CC = gcc
 CFLAGS = -std=c2x -Wall -Wextra -Iinclude
 ASAN = -fsanitize=address -fno-omit-frame-pointer
-INC_DIR = -Iinclude
+INC_DIR = -I include/stx/stx
 
 BUILD ?= debug
 
