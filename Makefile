@@ -1,5 +1,5 @@
 CC = gcc
-CFLAGS = -std=c2x -Wall -Wextra -Iinclude
+CFLAGS = -std=c2x -Wall -Wextra -Iinclude -lwolfssl -luring
 ASAN = -fsanitize=address -fno-omit-frame-pointer
 INC_DIR = -I include/stx/stx
 
@@ -9,6 +9,7 @@ ifeq ($(BUILD), release)
 	ASAN = 
 else
 	ASAN = -fsanitize=address -fno-omit-frame-pointer
+	CFLAGS += -g
 endif
 
 SRC_DIR = src
