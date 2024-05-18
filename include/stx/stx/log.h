@@ -16,7 +16,7 @@ static struct tm *time_event() {
     char buf[64];                                                   \
     struct tm *event_time = time_event();                           \
     buf[strftime(buf, sizeof(buf), "%H:%M:%S", event_time)] = '\0'; \
-    printf("%s%s\x1b[0m ", event_color, buf);                       \
+    printf("%s%s\x1b[0m ", "\x1b[90m", buf);                        \
   }
 #else
 #define log_time() \
