@@ -11,10 +11,15 @@
 #include <stdint.h>
 #include <stdio.h>
 
+#define LOG_DEBUG
+#define LOG_WITH_TIME
+#include "log.h"
+
 int global_total_tests;
 int global_failed_tests;
 
 int main() {
+  log_debug("%s", "hej");
   int result = (global_failed_tests != 0);
 
   CHECK_TIME(pool_test(), "Pool test took:");

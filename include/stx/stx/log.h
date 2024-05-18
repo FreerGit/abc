@@ -5,16 +5,16 @@
 #include <time.h>
 
 #if defined(LOG_WITH_TIME)
-static struct tm *time_event() {
-  time_t t = time(NULL);
-  struct tm *l = localtime(&t);
-  return l;
-}
+#define TIME_EVENT() ({         \
+  time_t t = time(NULL);        \
+  struct tm *l = localtime(&t); \
+  l;                            \
+})
 
 #define log_time()                                                  \
   {                                                                 \
     char buf[64];                                                   \
-    struct tm *event_time = time_event();                           \
+    struct tm *event_time = TIME_EVENT();                           \
     buf[strftime(buf, sizeof(buf), "%H:%M:%S", event_time)] = '\0'; \
     printf("%s%s\x1b[0m ", "\x1b[90m", buf);                        \
   }
@@ -33,8 +33,7 @@ static struct tm *time_event() {
   }
 
 #if defined(LOG_DEBUG)
-static const char *debug_color = "\x1b[36m";
-#define log_debug(format, ...) log("DEBUG", debug_color, format, ##__VA_ARGS__)
+#define log_debug(format, ...) log("DEBUG", "\x1b[36m", format, ##__VA_ARGS__)
 #else
 #define log_debug(format, ...) \
   {}
