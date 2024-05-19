@@ -1,15 +1,3 @@
 {
-    "files.associations": {
-        "fcntl.h": "c",
-        "liburing.h": "c",
-        "netdb.h": "c",
-        "log.h": "c",
-        "inet.h": "c",
-        "signal.h": "c",
-        "in.h": "c",
-        "stdlib.h": "c",
-        "sig_atomic_t.h": "c",
-        "sigset_t.h": "c",
-        "socket.h": "c"
-    }
+    "nixEnvSelector.nixFile": "${workspaceFolder}/shell.nix"
 }
