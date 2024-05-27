@@ -18,6 +18,8 @@
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
+#include "stx.h"
+
 #define QUEUE_DEPTH 64
 #define MAX_BUFFER_SIZE 4096
 
@@ -30,13 +32,10 @@ void prep_read(int fd, struct io_uring *ring, size_t max_buff_size) {
     log_fatal("could not get sqe");
   }
 
-  // io_uring_prep_recv(sqe, fd, NULL, max_buff_size, 0);
-  // sqe->flags |= IOSQE_BUFFER_SELECT;
-  // sqe->buf_group = 0;
   struct iovec *req = malloc(sizeof(struct iovec));
   req->iov_base = malloc(max_buff_size);
   req->iov_len = max_buff_size;
-  // memset(&sqe->user_data, 0, max_buff_size);
+
   memcpy(&sqe->user_data, &req, sizeof(req));
   io_uring_prep_readv(sqe, fd, req, 1, 0);
   perror("read");
@@ -47,107 +46,43 @@ void prep_read(int fd, struct io_uring *ring, size_t max_buff_size) {
   perror("submit");
 }
 
-// void on_data_recv(struct io_uring *ring, struct io_uring_cqe *cqe) {
-// }
-
 int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
-  log_info("waiting");
   (void)ssl;
   int sockfd = *(int *)ctx;
   int ret = 0;
+
   prep_read(sockfd, &ring, sz);
 
-  int ret_ret = io_uring_wait_cqe(&ring, &cqe);
-  perror("waiting");
-  // memcpy(buf, &cqe->user_data, read_bytes);
+  // int ret_ret = io_uring_wait_cqe(&ring, &cqe);
+  int ret_ret;
+  while (1) {
+    ret_ret = io_uring_peek_cqe(&ring, &cqe);
+    if (ret_ret == -EAGAIN) {
+      // No completion yet, continue polling
+      log_debug("continue");
+      continue;
+    } else if (ret_ret < 0) {
+      io_uring_queue_exit(&ring);
+      log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
+      // return 1;
+    } else {
+      log_info("got data");
+      break;
+    }
+  }
+
+  // CHECK_TIME({
+
   struct iovec *data = (struct iovec *)cqe->user_data;
-  log_debug("%d, %s", cqe->res, buf);
+  // log_debug("%d, %s", cqe->res, buf);
 
   memcpy(buf, data->iov_base, cqe->res);
-  // buf = data->iov_base;
   ret = cqe->res;
   sz = cqe->res;
 
   io_uring_cqe_seen(&ring, cqe);
-  // printf("/*-------------------- CLIENT READING -----------------*/\n");
-  // for (int i = 0; i < ret; i++) {
-  //   printf("%02X ", *((unsigned char *)buf + i));
-  //   if (i > 0 && (i % 16) == 0)
-  //     printf("\n");
-  // }
-  // printf("\n/*-------------------- CLIENT READING -----------------*/\n");
-
-  //   if ((ret = (int)read(sockfd, buf, (size_t)sz)) == -1) {
-  //     /* error encountered. Be responsible and report it in wolfSSL terms */
-
-  //     fprintf(stderr, "IO RECEIVE ERROR: ");
-  //     switch (errno) {
-  // #if EAGAIN != EWOULDBLOCK
-  //     case EAGAIN: /* EAGAIN == EWOULDBLOCK on some systems, but not others */
-  // #endif
-  //     case EWOULDBLOCK:
-  //       if (!wolfSSL_dtls(ssl) || wolfSSL_get_using_nonblock(ssl)) {
-  //         fprintf(stderr, "would block\n");
-  //         return WOLFSSL_CBIO_ERR_WANT_READ;
-  //       } else {
-  //         fprintf(stderr, "socket timeout\n");
-  //         return WOLFSSL_CBIO_ERR_TIMEOUT;
-  //       }
-  //     case ECONNRESET:
-  //       fprintf(stderr, "connection reset\n");
-  //       return WOLFSSL_CBIO_ERR_CONN_RST;
-  //     case EINTR:
-  //       fprintf(stderr, "socket interrupted\n");
-  //       return WOLFSSL_CBIO_ERR_ISR;
-  //     case ECONNREFUSED:
-  //       fprintf(stderr, "connection refused\n");
-  //       return WOLFSSL_CBIO_ERR_WANT_READ;
-  //     case ECONNABORTED:
-  //       fprintf(stderr, "connection aborted\n");
-  //       return WOLFSSL_CBIO_ERR_CONN_CLOSE;
-  //     default:
-  //       fprintf(stderr, "general error\n");
-  //       return WOLFSSL_CBIO_ERR_GENERAL;
-  //     }
-  //   } else if (ret == 0) {
-  //     printf("Connection closed\n");
-  //     return WOLFSSL_CBIO_ERR_CONN_CLOSE;
-  //   }
-
-  log_debug("%d", ret);
-  // Read the response
-  // struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  // struct iovec *req = malloc(sizeof(struct iovec));
-  // req->iov_base = malloc(MAX_BUFFER_SIZE);
-  // req->iov_len = MAX_BUFFER_SIZE;
-  // memset(req->iov_base, 0, MAX_BUFFER_SIZE);
-
-  // io_uring_prep_readv(sqe, sockfd, req, 1, 0);
-  // perror("read");
-  // io_uring_sqe_set_data(sqe, req);
-  // perror("read");
-  // io_uring_submit(&ring);
-  // perror("read");
-
-  // int ret_ret = io_uring_wait_cqe(&ring, &cqe);
-  // perror("read");
-  // struct iovec *data = (struct iovec *)cqe->user_data;
-  // log_debug("%d, %s", cqe->res, data->iov_base);
-
-  // buf = ((char *)((struct iovec *)cqe->user_data)[0].iov_base);
-  // sz = cqe->res;
-
-  // io_uring_cqe_seen(&ring, cqe);
-  // free(req->iov_base);
-  // free(req);
-
-  // printf("/*-------------------- CLIENT READING -----------------*/\n");
-  // for (int i = 0; i < cqe->res; i++) {
-  //   printf("%02X ", *((unsigned char *)buf + i));
-  //   if (i > 0 && (i % 16) == 0)
-  //     printf("\n");
-  // }
-  // printf("\n/*-------------------- CLIENT READING -----------------*/\n");
+  // }, "read");
+  log_debug("%d %d", ret, ret_ret);
 
   return ret;
 }
@@ -193,6 +128,9 @@ int CbIOSend(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
 }
 
 int main() {
+  struct io_uring_params params;
+  memset(&params, 0, sizeof(params));
+  // params.flags = IORING_SETUP_IOPOLL;
 
   // Set up liburing 2.5
   if (io_uring_queue_init(QUEUE_DEPTH, &ring, 0) < 0) {
@@ -211,7 +149,7 @@ int main() {
   }
 
   // Create a socket and connect to www.example.com
-  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  int sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
   if (sockfd < 0) {
     fprintf(stderr, "Failed to create socket\n");
     return 1;
@@ -229,10 +167,56 @@ int main() {
     return 1;
   }
 
-  if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
-    fprintf(stderr, "Failed to connect to server\n");
+  // if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+  //   fprintf(stderr, "Failed to connect to server\n");
+  //   return 1;
+  // }
+
+  // Prepare the connect operation
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
+  if (!sqe) {
+    log_error("io_uring_get_sqe: queue is full\n");
+    io_uring_queue_exit(&ring);
+    close(sockfd);
     return 1;
   }
+  io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+
+  // Submit the request
+  int conn_ret = io_uring_submit(&ring);
+  if (conn_ret < 0) {
+    log_error("io_uring_submit: %d\n", -conn_ret);
+    io_uring_queue_exit(&ring);
+    close(sockfd);
+    return 1;
+  }
+
+  // Poll for completion
+  while (1) {
+    conn_ret = io_uring_peek_cqe(&ring, &cqe);
+    if (conn_ret == -EAGAIN) {
+      // No completion yet, continue polling
+      continue;
+    } else if (conn_ret < 0) {
+      fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-conn_ret));
+      io_uring_queue_exit(&ring);
+      close(sockfd);
+      return 1;
+    } else {
+      break;
+    }
+  }
+
+  // Process the completion
+  if (cqe->res < 0) {
+    log_debug("here %d", cqe->res);
+    fprintf(stderr, "Async connect failed: %s\n", strerror(-cqe->res));
+    io_uring_queue_exit(&ring);
+    close(sockfd);
+    return 1;
+  }
+
+  io_uring_cqe_seen(&ring, cqe);
 
   // Create a WolfSSL object
   WOLFSSL *ssl = wolfSSL_new(ctx);
@@ -248,7 +232,6 @@ int main() {
   int ret = wolfSSL_connect(ssl);
   if (ret != SSL_SUCCESS) {
     perror("connect");
-    // log_error("Connect: %d", );
     char errorString[80];
     int err_c = wolfSSL_get_error(ssl, ret);
     log_error("%d", err_c);
@@ -262,21 +245,6 @@ int main() {
   char read_buffer[MAX_BUFFER_SIZE];
   char write_buffer[] = "GET / HTTP/1.1\r\nHost:www.example.com\r\n\r\n";
 
-  // Send the GET request
-  // struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
-  // io_uring_prep_send(sqe, sockfd, write_buffer, strlen(write_buffer), 0);
-  // io_uring_submit(&ring);
-
-  // // Wait for the write operation to complete
-  // io_uring_wait_cqe(&ring, &cqe);
-  // perror("write");
-  // io_uring_cqe_seen(&ring, cqe);
-
-  // log_info("%d, %.*s", data->iov_len, data->iov_len, data->iov_base);
-  // log_info("%d, %.*s", req->iov_len, req->iov_len, req->iov_base);
-  // log_info("%d, BEGIN%.*XEND", cqe->res, cqe->res, data->iov_base);
-  // log_info("%d, BEGIN%.*XEND", cqe->res, cqe->res, req[0].iov_base);
-
   if ((ret = wolfSSL_write(ssl, write_buffer, strlen(write_buffer))) != strlen(write_buffer)) {
     fprintf(stderr, "ERROR: failed to write\n");
     // goto exit;
@@ -286,28 +254,16 @@ int main() {
   char buff[MAX_BUFFER_SIZE];
   memset(buff, 0, sizeof(buff));
 
-  // prep_read(sockfd, &ring, MAX_BUFFER_SIZE);
-
   if ((r = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) == -1) {
     fprintf(stderr, "ERROR: failed to read\n");
   }
   log_debug("read: %d", r);
   log_info("%s", buff);
-  // for (int i = 0; i < 1; i++) {
-  //   printf("iov[%d]: ", i);
-  //   for (int j = 0; j < cqe->res; j++) {
-  //     printf("%02X ", *((unsigned char *)data[i].iov_base + j));
-  //   }
-  //   printf("\n");
-  // }
 
-  // free(req->iov_base);
-  // free(req);
-  // Clean up
-  // io_uring_queue_exit(&ring);
-  // wolfSSL_free(ssl);
-  // wolfSSL_CTX_free(ctx);
-  // wolfSSL_Cleanup();
+  io_uring_queue_exit(&ring);
+  wolfSSL_free(ssl);
+  wolfSSL_CTX_free(ctx);
+  wolfSSL_Cleanup();
 
   return 0;
 }
