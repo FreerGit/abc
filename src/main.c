@@ -18,6 +18,7 @@
 #include <wolfssl/ssl.h>
 
 #include "stx.h"
+#include <stdbool.h>
 
 #define QUEUE_DEPTH 64
 #define MAX_BUFFER_SIZE 4096 * 2
@@ -47,36 +48,42 @@ void prep_send(int fd, struct io_uring *ring, char *buf, size_t sz) {
   io_uring_submit(ring);
 }
 
+bool to_prep = true;
+
 int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   (void)ssl;
   int sockfd = *(int *)ctx;
   int ret = 0;
-
-  prep_read(sockfd, &ring, sz);
-  log_info("called");
-
-  int ret_ret;
-  while (1) {
-    ret_ret = io_uring_peek_cqe(&ring, &cqe);
-    if (ret_ret == -EAGAIN) {
-      // No completion yet, continue polling
-      continue;
-    } else if (ret_ret < 0) {
-      io_uring_queue_exit(&ring);
-      log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
-      // return 1;
-    } else {
-      break;
-    }
+  if (to_prep) {
+    prep_read(sockfd, &ring, sz);
   }
+  // log_info("called");
+  int ret_ret;
+  ret_ret = io_uring_peek_cqe(&ring, &cqe);
 
-  struct iovec *data = (struct iovec *)cqe->user_data;
-
-  memcpy(buf, data->iov_base, cqe->res);
-  ret = cqe->res;
-  sz = cqe->res;
-
-  io_uring_cqe_seen(&ring, cqe);
+  // while (1) {
+  //   if (ret_ret == -EAGAIN) {
+  //     // No completion yet, continue polling
+  //     continue;
+  //   } else if (ret_ret < 0) {
+  //     io_uring_queue_exit(&ring);
+  //     log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
+  //     // return 1;
+  //   } else {
+  //     break;
+  //   }
+  // }
+  if (ret_ret != -EAGAIN) {
+    struct iovec *data = (struct iovec *)cqe->user_data;
+    memcpy(buf, data->iov_base, cqe->res);
+    ret = cqe->res;
+    sz = cqe->res;
+    io_uring_cqe_seen(&ring, cqe);
+    to_prep = true;
+  } else {
+    ret = WOLFSSL_CBIO_ERR_WANT_READ;
+    to_prep = false;
+  }
 
   return ret;
 }
@@ -85,28 +92,44 @@ int CbIOSend(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   (void)ssl; /* will not need ssl context, just using the file system */
   int sockfd = *(int *)ctx;
   int sent;
-
+  // log_debug("called send");
   prep_send(sockfd, &ring, buf, sz);
-
   int ret_ret;
-  while (1) {
-    ret_ret = io_uring_peek_cqe(&ring, &cqe);
-    if (ret_ret == -EAGAIN) {
-      // No completion yet, continue polling
-      continue;
-    } else if (ret_ret < 0) {
-      io_uring_queue_exit(&ring);
-      log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
-      // return 1;
-    } else {
-      break;
-    }
+  ret_ret = io_uring_peek_cqe(&ring, &cqe);
+
+  // while (1) {
+  //   if (ret_ret == -EAGAIN) {
+  //     // No completion yet, continue polling
+  //     continue;
+  //   } else if (ret_ret < 0) {
+  //     io_uring_queue_exit(&ring);
+  //     log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
+  //     // return 1;
+  //   } else {
+  //     break;
+  //   }
+  // }
+  if (ret_ret != -EAGAIN) {
+    sent = cqe->res;
+    io_uring_cqe_seen(&ring, cqe);
+  } else {
+    sent = 0;
   }
 
-  sent = cqe->res;
-  io_uring_cqe_seen(&ring, cqe);
-
   return sent;
+}
+
+int set_socket_nonblocking(int sockfd) {
+  int flags = fcntl(sockfd, F_GETFL, 0);
+  if (flags < 0) {
+    perror("fcntl(F_GETFL)");
+    return -1;
+  }
+  if (fcntl(sockfd, F_SETFL, flags | O_NONBLOCK) < 0) {
+    perror("fcntl(F_SETFL)");
+    return -1;
+  }
+  return 0;
 }
 
 int main() {
@@ -131,11 +154,8 @@ int main() {
   }
 
   // Create a socket and connect to www.example.com
-  int sockfd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
-  if (sockfd < 0) {
-    fprintf(stderr, "Failed to create socket\n");
-    return 1;
-  }
+  int sockfd = socket(AF_INET, SOCK_STREAM, 0);
+  set_socket_nonblocking(sockfd);
 
   wolfSSL_SetIORecv(ctx, CbIORecv);
   wolfSSL_SetIOSend(ctx, CbIOSend);
@@ -173,22 +193,22 @@ int main() {
     return 1;
   }
 
-  // Poll for completion
-  while (1) {
-    conn_ret = io_uring_peek_cqe(&ring, &cqe);
-    if (conn_ret == -EAGAIN) {
-      // No completion yet, continue polling
-      continue;
-    } else if (conn_ret < 0) {
-      fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-conn_ret));
-      io_uring_queue_exit(&ring);
-      close(sockfd);
-      return 1;
-    } else {
-      break;
-    }
-  }
-
+  CHECK_TIME({
+    // Poll for completion
+    while (1) {
+      conn_ret = io_uring_peek_cqe(&ring, &cqe);
+      if (conn_ret == -EAGAIN) {
+        // No completion yet, continue polling
+        continue;
+      } else if (conn_ret < 0) {
+        fprintf(stderr, "io_uring_peek_cqe: %s\n", strerror(-conn_ret));
+        io_uring_queue_exit(&ring);
+        close(sockfd);
+        return 1;
+      } else {
+        break;
+      }
+    } }, "first conn");
   // Process the completion
   if (cqe->res < 0) {
     fprintf(stderr, "Async connect failed: %s\n", strerror(-cqe->res));
