@@ -5,7 +5,6 @@
 #include <arpa/inet.h>
 #include <bits/types/sigset_t.h>
 #include <fcntl.h>
-#include <fcntl.h> // Include this header for AT_FDCWD
 #include <liburing.h>
 #include <netdb.h>
 #include <netinet/in.h>
@@ -21,7 +20,7 @@
 #include "stx.h"
 
 #define QUEUE_DEPTH 64
-#define MAX_BUFFER_SIZE 4096
+#define MAX_BUFFER_SIZE 4096 * 2
 
 struct io_uring ring;
 struct io_uring_cqe *cqe;
@@ -38,12 +37,14 @@ void prep_read(int fd, struct io_uring *ring, size_t max_buff_size) {
 
   memcpy(&sqe->user_data, &req, sizeof(req));
   io_uring_prep_readv(sqe, fd, req, 1, 0);
-  perror("read");
-
   io_uring_sqe_set_data(sqe, req);
-  perror("set");
   io_uring_submit(ring);
-  perror("submit");
+}
+
+void prep_send(int fd, struct io_uring *ring, char *buf, size_t sz) {
+  struct io_uring_sqe *sqe = io_uring_get_sqe(ring);
+  io_uring_prep_send(sqe, fd, buf, sz, 0);
+  io_uring_submit(ring);
 }
 
 int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
@@ -52,37 +53,30 @@ int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   int ret = 0;
 
   prep_read(sockfd, &ring, sz);
+  log_info("called");
 
-  // int ret_ret = io_uring_wait_cqe(&ring, &cqe);
   int ret_ret;
   while (1) {
     ret_ret = io_uring_peek_cqe(&ring, &cqe);
     if (ret_ret == -EAGAIN) {
       // No completion yet, continue polling
-      log_debug("continue");
       continue;
     } else if (ret_ret < 0) {
       io_uring_queue_exit(&ring);
       log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
       // return 1;
     } else {
-      log_info("got data");
       break;
     }
   }
 
-  // CHECK_TIME({
-
   struct iovec *data = (struct iovec *)cqe->user_data;
-  // log_debug("%d, %s", cqe->res, buf);
 
   memcpy(buf, data->iov_base, cqe->res);
   ret = cqe->res;
   sz = cqe->res;
 
   io_uring_cqe_seen(&ring, cqe);
-  // }, "read");
-  log_debug("%d %d", ret, ret_ret);
 
   return ret;
 }
@@ -92,38 +86,26 @@ int CbIOSend(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   int sockfd = *(int *)ctx;
   int sent;
 
-  /* Receive message from socket */
-  if ((sent = send(sockfd, buf, sz, 0)) == -1) {
-    /* error encountered. Be responsible and report it in wolfSSL terms */
+  prep_send(sockfd, &ring, buf, sz);
 
-    fprintf(stderr, "IO SEND ERROR: ");
-    switch (errno) {
-#if EAGAIN != EWOULDBLOCK
-    case EAGAIN: /* EAGAIN == EWOULDBLOCK on some systems, but not others */
-#endif
-    case EWOULDBLOCK:
-      fprintf(stderr, "would block\n");
-      return WOLFSSL_CBIO_ERR_WANT_WRITE;
-    case ECONNRESET:
-      fprintf(stderr, "connection reset\n");
-      return WOLFSSL_CBIO_ERR_CONN_RST;
-    case EINTR:
-      fprintf(stderr, "socket interrupted\n");
-      return WOLFSSL_CBIO_ERR_ISR;
-    case EPIPE:
-      fprintf(stderr, "socket EPIPE\n");
-      return WOLFSSL_CBIO_ERR_CONN_CLOSE;
-    default:
-      fprintf(stderr, "general error\n");
-      return WOLFSSL_CBIO_ERR_GENERAL;
+  int ret_ret;
+  while (1) {
+    ret_ret = io_uring_peek_cqe(&ring, &cqe);
+    if (ret_ret == -EAGAIN) {
+      // No completion yet, continue polling
+      continue;
+    } else if (ret_ret < 0) {
+      io_uring_queue_exit(&ring);
+      log_fatal("io_uring_peek_cqe: %s\n", strerror(-ret_ret));
+      // return 1;
+    } else {
+      break;
     }
-  } else if (sent == 0) {
-    printf("Connection closed\n");
-    return 0;
   }
 
-  /* successful send */
-  printf("my_IOSend: sent %d bytes to %d\n", sz, sockfd);
+  sent = cqe->res;
+  io_uring_cqe_seen(&ring, cqe);
+
   return sent;
 }
 
@@ -209,7 +191,6 @@ int main() {
 
   // Process the completion
   if (cqe->res < 0) {
-    log_debug("here %d", cqe->res);
     fprintf(stderr, "Async connect failed: %s\n", strerror(-cqe->res));
     io_uring_queue_exit(&ring);
     close(sockfd);
@@ -228,37 +209,40 @@ int main() {
   // Attach the socket to the WolfSSL object
   wolfSSL_set_fd(ssl, sockfd);
 
-  // Perform the TLS/SSL handshake
-  int ret = wolfSSL_connect(ssl);
-  if (ret != SSL_SUCCESS) {
-    perror("connect");
-    char errorString[80];
-    int err_c = wolfSSL_get_error(ssl, ret);
-    log_error("%d", err_c);
-    wolfSSL_ERR_error_string(err_c, errorString);
-    log_error("%s", errorString);
-    fprintf(stderr, "Failed to perform TLS/SSL handshake\n");
-    return 1;
-  }
-
+  int ret;
+  CHECK_TIME({
+    // Perform the TLS/SSL handshake
+    ret = wolfSSL_connect(ssl);
+    if (ret != SSL_SUCCESS) {
+      perror("connect");
+      char errorString[80];
+      int err_c = wolfSSL_get_error(ssl, ret);
+      log_error("%d", err_c);
+      wolfSSL_ERR_error_string(err_c, errorString);
+      log_error("%s", errorString);
+      fprintf(stderr, "Failed to perform TLS/SSL handshake\n");
+      return 1;
+    } }, "connect");
   // Allocate buffers for read and write operations
   char read_buffer[MAX_BUFFER_SIZE];
   char write_buffer[] = "GET / HTTP/1.1\r\nHost:www.example.com\r\n\r\n";
 
+  CHECK_TIME({
+
   if ((ret = wolfSSL_write(ssl, write_buffer, strlen(write_buffer))) != strlen(write_buffer)) {
     fprintf(stderr, "ERROR: failed to write\n");
     // goto exit;
-  }
+  } }, "send");
 
   int r;
   char buff[MAX_BUFFER_SIZE];
   memset(buff, 0, sizeof(buff));
 
-  if ((r = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) == -1) {
-    fprintf(stderr, "ERROR: failed to read\n");
-  }
-  log_debug("read: %d", r);
-  log_info("%s", buff);
+  CHECK_TIME({
+    if ((r = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) == -1) {
+      fprintf(stderr, "ERROR: failed to read\n");
+    } }, "read");
+  log_info("\n%s", buff);
 
   io_uring_queue_exit(&ring);
   wolfSSL_free(ssl);
