@@ -1,7 +1,7 @@
 
 CC = gcc
 ifeq ($(BUILD), release)
-CFLAGS = -std=c2x -Os -finline-functions -s -DNDEBUG
+CFLAGS = -std=c2x -O3 -finline-functions -s -DNDEBUG 
 else
 BUILD = debug
 CFLAGS = -std=c2x -Wextra -Wall -Wfloat-equal -Wundef -Wshadow -Wpointer-arith -Wcast-align -Wstrict-prototypes -Wstrict-overflow=5 -Wwrite-strings  -Wcast-qual -Wswitch-default -Wswitch-enum -Wconversion -Wunreachable-code -fno-omit-frame-pointer -fno-var-tracking-assignments -Wformat=2 -Wno-discarded-qualifiers
@@ -19,9 +19,9 @@ OBJS := $(patsubst %.c,%.o,$(SRCS))
 all: $(TARGET)
 $(TARGET): $(OBJS)
 	$(info BUILD=$(BUILD))
-	@$(CC) $(CFLAGS) $(SANFLAGS) -o $@ $(BUILD_FOLDER)/$(notdir $^)
+	@$(CC) $(CFLAGS) $(SANFLAGS) -o $@ $(BUILD_FOLDER)/$(notdir $^)  -lrt
 %.o: %.c
-	@$(CC) $(CFLAGS) $(SANFLAGS)  -c $< -o $(BUILD_FOLDER)/$(notdir $@)
+	@$(CC) $(CFLAGS) $(SANFLAGS)  -c $< -o $(BUILD_FOLDER)/$(notdir $@) -lrt
 
 test: $(TARGET)
 	@echo " "

@@ -1,32 +1,34 @@
+#include <stdio.h>
+
+#include "base.h"
 #include "dyn_array.h"
 #include "mem.h"
-#include "string.h"
-#include "stx.h"
+#include "string8.h"
 #include "testlib.h"
-#include <stdio.h>
 
 typedef struct {
   String8 name;
-  uint64_t age;
-  uint64_t num1;
-  uint64_t num2;
-  uint64_t num3;
-  uint64_t num4;
-  uint64_t num5;
+  ulong   age;
+  ulong   num1;
+  ulong   num2;
+  ulong   num3;
+  ulong   num4;
+  ulong   num5;
 } Large;
 
 // static_assert(sizeof(Large) == 64);
 
 bool assert_struct_values(Large l) {
-  return string_equal(l.name, String8("Large")) && l.age == 0 && l.num1 == 1 && l.num2 == 2 &&
-         l.num3 == 3 && l.num3 == 3 && l.num4 == 4 && l.num5 == 5;
+  return string_equal(l.name, String8("Large")) && l.age == 0 && l.num1 == 1 &&
+         l.num2 == 2 && l.num3 == 3 && l.num3 == 3 && l.num4 == 4 &&
+         l.num5 == 5;
 }
 
 void dyn_array_test(void) {
-  size_t size = 1024 * 1024;
+  size_t        size = 1024 * 1024;
   unsigned char backing_buffer[size];
-  Arena arena = arena_init(backing_buffer, size);
-  Allocator allocator = arena_alloc_init(&arena);
+  Arena         arena     = arena_init(backing_buffer, size);
+  Allocator     allocator = arena_alloc_init(&arena);
 
   Large *arr = array(Large, &allocator);
 
