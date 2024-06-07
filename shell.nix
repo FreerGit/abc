@@ -15,5 +15,8 @@ pkgs.mkShell {
     libgcc
     wolfssl
     liburing
+    clang
+    clang-tools
+    bear
   ];
 }

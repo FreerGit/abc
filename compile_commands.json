@@ -1,0 +1,20 @@
+[
+  {
+    "arguments": [
+      "/nix/store/bd0ii4p72zgiy1jfaww5h3xihxn2l56x-gcc-wrapper-13.2.0/bin/gcc",
+      "-std=c2x",
+      "-Wall",
+      "-Wextra",
+      "-Iinclude",
+      "-I",
+      "include/stx/stx",
+      "-c",
+      "-o",
+      "build/main.o",
+      "src/main.c"
+    ],
+    "directory": "/home/a7/dev/abc",
+    "file": "/home/a7/dev/abc/src/main.c",
+    "output": "/home/a7/dev/abc/build/main.o"
+  }
+]

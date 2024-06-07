@@ -1,14 +1,15 @@
+#define _POSIX_C_SOURCE 200809L
+
 #define LOG_DEBUG
 #define LOG_WITH_TIME
 #define _ATFILE_SOURCE
-#include "log.h"
 #include <arpa/inet.h>
 #include <bits/types/sigset_t.h>
 #include <fcntl.h>
 #include <liburing.h>
 #include <netdb.h>
 #include <netinet/in.h>
-#include <signal.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -17,13 +18,13 @@
 #include <wolfssl/options.h>
 #include <wolfssl/ssl.h>
 
-#include "stx.h"
-#include <stdbool.h>
+#include "base.h"
+#include "log.h"
 
 #define QUEUE_DEPTH 64
 #define MAX_BUFFER_SIZE 4096 * 2
 
-struct io_uring ring;
+struct io_uring      ring;
 struct io_uring_cqe *cqe;
 
 void prep_read(int fd, struct io_uring *ring, size_t max_buff_size) {
@@ -33,8 +34,8 @@ void prep_read(int fd, struct io_uring *ring, size_t max_buff_size) {
   }
 
   struct iovec *req = malloc(sizeof(struct iovec));
-  req->iov_base = malloc(max_buff_size);
-  req->iov_len = max_buff_size;
+  req->iov_base     = malloc(max_buff_size);
+  req->iov_len      = max_buff_size;
 
   memcpy(&sqe->user_data, &req, sizeof(req));
   io_uring_prep_readv(sqe, fd, req, 1, 0);
@@ -53,7 +54,7 @@ bool to_prep = true;
 int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   (void)ssl;
   int sockfd = *(int *)ctx;
-  int ret = 0;
+  int ret    = 0;
   if (to_prep) {
     prep_read(sockfd, &ring, sz);
   }
@@ -77,11 +78,11 @@ int CbIORecv(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
     struct iovec *data = (struct iovec *)cqe->user_data;
     memcpy(buf, data->iov_base, cqe->res);
     ret = cqe->res;
-    sz = cqe->res;
+    sz  = cqe->res;
     io_uring_cqe_seen(&ring, cqe);
     to_prep = true;
   } else {
-    ret = WOLFSSL_CBIO_ERR_WANT_READ;
+    ret     = WOLFSSL_CBIO_ERR_WANT_READ;
     to_prep = false;
   }
 
@@ -163,13 +164,15 @@ int main() {
   struct sockaddr_in server_addr;
   memset(&server_addr, 0, sizeof(server_addr));
   server_addr.sin_family = AF_INET;
-  server_addr.sin_port = htons(443);                                     // HTTPS port
-  if (inet_pton(AF_INET, "93.184.215.14", &server_addr.sin_addr) <= 0) { // www.example.com IP
+  server_addr.sin_port   = htons(443);  // HTTPS port
+  if (inet_pton(AF_INET, "93.184.215.14", &server_addr.sin_addr) <=
+      0) {  // www.example.com IP
     fprintf(stderr, "Invalid address\n");
     return 1;
   }
 
-  // if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) < 0) {
+  // if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) <
+  // 0) {
   //   fprintf(stderr, "Failed to connect to server\n");
   //   return 1;
   // }
@@ -182,7 +185,8 @@ int main() {
     close(sockfd);
     return 1;
   }
-  io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr));
+  io_uring_prep_connect(sqe, sockfd, (struct sockaddr *)&server_addr,
+                        sizeof(server_addr));
 
   // Submit the request
   int conn_ret = io_uring_submit(&ring);
@@ -193,7 +197,7 @@ int main() {
     return 1;
   }
 
-  CHECK_TIME({
+  ulong ns = TIME_A_BLOCK_NS({
     // Poll for completion
     while (1) {
       conn_ret = io_uring_peek_cqe(&ring, &cqe);
@@ -208,7 +212,8 @@ int main() {
       } else {
         break;
       }
-    } }, "first conn");
+    }
+  });
   // Process the completion
   if (cqe->res < 0) {
     fprintf(stderr, "Async connect failed: %s\n", strerror(-cqe->res));
@@ -230,39 +235,45 @@ int main() {
   wolfSSL_set_fd(ssl, sockfd);
 
   int ret;
-  CHECK_TIME({
+  ns = TIME_A_BLOCK_NS({
     // Perform the TLS/SSL handshake
     ret = wolfSSL_connect(ssl);
     if (ret != SSL_SUCCESS) {
       perror("connect");
       char errorString[80];
-      int err_c = wolfSSL_get_error(ssl, ret);
+      int  err_c = wolfSSL_get_error(ssl, ret);
       log_error("%d", err_c);
       wolfSSL_ERR_error_string(err_c, errorString);
       log_error("%s", errorString);
       fprintf(stderr, "Failed to perform TLS/SSL handshake\n");
       return 1;
-    } }, "connect");
+    }
+  });
+  log_debug("connect took %ld ns", ns);
   // Allocate buffers for read and write operations
   char read_buffer[MAX_BUFFER_SIZE];
   char write_buffer[] = "GET / HTTP/1.1\r\nHost:www.example.com\r\n\r\n";
 
-  CHECK_TIME({
+  ns = TIME_A_BLOCK_NS({
+    if ((ret = wolfSSL_write(ssl, write_buffer, strlen(write_buffer))) !=
+        strlen(write_buffer)) {
+      fprintf(stderr, "ERROR: failed to write\n");
+      // goto exit;
+    }
+  });
+  log_debug("send took %ld ns", ns);
 
-  if ((ret = wolfSSL_write(ssl, write_buffer, strlen(write_buffer))) != strlen(write_buffer)) {
-    fprintf(stderr, "ERROR: failed to write\n");
-    // goto exit;
-  } }, "send");
-
-  int r;
+  int  r;
   char buff[MAX_BUFFER_SIZE];
   memset(buff, 0, sizeof(buff));
 
-  CHECK_TIME({
+  ns = TIME_A_BLOCK_NS({
     if ((r = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) == -1) {
       fprintf(stderr, "ERROR: failed to read\n");
-    } }, "read");
-  log_info("\n%s", buff);
+    }
+  });
+
+  log_info("read in %ld ns, \n%s", ns, buff);
 
   io_uring_queue_exit(&ring);
   wolfSSL_free(ssl);
