@@ -120,7 +120,7 @@ int CbIOSend(WOLFSSL *ssl, char *buf, int sz, void *ctx) {
   return sent;
 }
 
-int set_socket_nonblocking(int sockfd) {
+FN_PURE int set_socket_nonblocking(int sockfd) {
   int flags = fcntl(sockfd, F_GETFL, 0);
   if (flags < 0) {
     perror("fcntl(F_GETFL)");
@@ -156,7 +156,9 @@ int main() {
 
   // Create a socket and connect to www.example.com
   int sockfd = socket(AF_INET, SOCK_STREAM, 0);
-  set_socket_nonblocking(sockfd);
+  if (set_socket_nonblocking(sockfd) < 0) {
+    log_fatal("Could not set socket to non-blocking");
+  }
 
   wolfSSL_SetIORecv(ctx, CbIORecv);
   wolfSSL_SetIOSend(ctx, CbIOSend);
@@ -165,17 +167,11 @@ int main() {
   memset(&server_addr, 0, sizeof(server_addr));
   server_addr.sin_family = AF_INET;
   server_addr.sin_port   = htons(443);  // HTTPS port
-  if (inet_pton(AF_INET, "93.184.215.14", &server_addr.sin_addr) <=
+  if (inet_pton(AF_INET, "151.101.2.137", &server_addr.sin_addr) <=
       0) {  // www.example.com IP
     fprintf(stderr, "Invalid address\n");
     return 1;
   }
-
-  // if (connect(sockfd, (struct sockaddr *)&server_addr, sizeof(server_addr)) <
-  // 0) {
-  //   fprintf(stderr, "Failed to connect to server\n");
-  //   return 1;
-  // }
 
   // Prepare the connect operation
   struct io_uring_sqe *sqe = io_uring_get_sqe(&ring);
@@ -214,6 +210,7 @@ int main() {
       }
     }
   });
+
   // Process the completion
   if (cqe->res < 0) {
     fprintf(stderr, "Async connect failed: %s\n", strerror(-cqe->res));
@@ -221,10 +218,12 @@ int main() {
     close(sockfd);
     return 1;
   }
+  log_info("Socket connection took %ld ns", ns);
 
   io_uring_cqe_seen(&ring, cqe);
 
   // Create a WolfSSL object
+  wolfSSL_CTX_set_verify(ctx, WOLFSSL_VERIFY_NONE, NULL);
   WOLFSSL *ssl = wolfSSL_new(ctx);
   if (ssl == NULL) {
     fprintf(stderr, "Failed to create WolfSSL object\n");
@@ -235,24 +234,35 @@ int main() {
   wolfSSL_set_fd(ssl, sockfd);
 
   int ret;
+
   ns = TIME_A_BLOCK_NS({
-    // Perform the TLS/SSL handshake
-    ret = wolfSSL_connect(ssl);
-    if (ret != SSL_SUCCESS) {
-      perror("connect");
-      char errorString[80];
-      int  err_c = wolfSSL_get_error(ssl, ret);
-      log_error("%d", err_c);
-      wolfSSL_ERR_error_string(err_c, errorString);
-      log_error("%s", errorString);
-      fprintf(stderr, "Failed to perform TLS/SSL handshake\n");
-      return 1;
+    while ((ret = wolfSSL_connect(ssl)) != SSL_SUCCESS) {
+      int error = wolfSSL_get_error(ssl, ret);
+
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        // Busy-polling: keep retrying
+        continue;
+      } else {
+        // Handle other errors (e.g., SSL handshake failure)
+        printf("wolfSSL_connect error: %d\n", error);
+        char errorString[80];
+        int  err_c = wolfSSL_get_error(ssl, ret);
+        log_error("%d", err_c);
+        wolfSSL_ERR_error_string(err_c, errorString);
+        log_error("%s", errorString);
+        wolfSSL_free(ssl);
+        wolfSSL_CTX_free(ctx);
+        wolfSSL_Cleanup();
+        close(sockfd);
+        return -1;
+      }
     }
+    // Perform the TLS/SSL handshake
   });
-  log_debug("connect took %ld ns", ns);
+  log_debug("TLS connect took %ld ns", ns);
   // Allocate buffers for read and write operations
   char read_buffer[MAX_BUFFER_SIZE];
-  char write_buffer[] = "GET / HTTP/1.1\r\nHost:www.example.com\r\n\r\n";
+  char write_buffer[] = "GET / HTTP/1.1\r\nHost:www.wolfssl.com\r\n\r\n";
 
   ns = TIME_A_BLOCK_NS({
     if ((ret = wolfSSL_write(ssl, write_buffer, strlen(write_buffer))) !=
@@ -268,8 +278,17 @@ int main() {
   memset(buff, 0, sizeof(buff));
 
   ns = TIME_A_BLOCK_NS({
-    if ((r = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) == -1) {
-      fprintf(stderr, "ERROR: failed to read\n");
+    while ((ret = wolfSSL_read(ssl, buff, sizeof(buff) - 1)) < 0) {
+      int error = wolfSSL_get_error(ssl, ret);
+
+      if (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE) {
+        // Busy-polling: keep retrying
+        continue;
+      } else {
+        // Handle other errors
+        printf("wolfSSL_read error: %d\n", error);
+        return -1;  // Return error
+      }
     }
   });
 

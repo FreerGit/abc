@@ -7,7 +7,8 @@ LFLAGS = -lwolfssl -luring
 BUILD ?= debug
 
 ifeq ($(BUILD), release)
-	ASAN = 
+	ASAN =  
+	CFLAGS += -O3 -s -DNDEBUG -march=native -flto
 else
 	ASAN = -fsanitize=address -fno-omit-frame-pointer
 	CFLAGS += -g
