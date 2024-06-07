@@ -1,7 +1,8 @@
 CC = gcc
-CFLAGS = -std=c2x -Wall -Wextra -Iinclude -lwolfssl -luring
+CFLAGS = -std=c2x -Wall -Wextra -Iinclude
 ASAN = -fsanitize=address -fno-omit-frame-pointer
-INC_DIR = -I include/stx/stx
+INC_DIR = -I include/stx/stx 
+LFLAGS = -lwolfssl -luring
 
 BUILD ?= debug
 
@@ -28,12 +29,12 @@ all: $(TARGET)
 
 # Build target
 $(TARGET): $(OBJS)
-	$(CC) $(CFLAGS) $(ASAN) $(INC_DIR) -o $@ $^
+	$(CC) $(CFLAGS) $(ASAN) $(INC_DIR) -o $@ $^ $(LFLAGS)
 
 # Compile .c to .o
 $(OBJ_DIR)/%.o: $(SRC_DIR)/%.c
 	@mkdir -p $(OBJ_DIR)
-	$(CC) $(CFLAGS) $(ASAN) $(INC_DIR) -c -o $@ $<
+	$(CC) $(CFLAGS) $(ASAN) $(INC_DIR) -c -o $@ $< $(LFLAGS)
 
 clean:
 	rm -rf $(OBJ_DIR) $(TARGET)

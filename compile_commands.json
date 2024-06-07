@@ -1,7 +1,7 @@
 [
   {
     "arguments": [
-      "/nix/store/bd0ii4p72zgiy1jfaww5h3xihxn2l56x-gcc-wrapper-13.2.0/bin/gcc",
+      "/usr/bin/gcc",
       "-std=c2x",
       "-Wall",
       "-Wextra",
